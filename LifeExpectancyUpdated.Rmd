@@ -1,0 +1,952 @@
+---
+title: "Life Expentacy analysis and prediction"
+author: "Chris Haub Laura Ahumada"
+date: '2022-04-03'
+header-includes:
+  \usepackage{mdframed}
+output: word_document
+---
+
+```{r, setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, comment=NA) 
+```
+
+```{r include=FALSE}
+#Load Libraries
+library(data.table)
+library(stringi)
+library(gridExtra)
+library(dplyr)
+library(tidyr)
+library(stringi)
+library(rvest) #html_table, html_node
+library(ggplot2)
+library(RCurl) #getURL
+library(naniar)
+library(e1071)
+library(tm) 
+library(stringr)
+library("kableExtra")
+library(ggthemes)
+library("ggpubr")
+library(class)
+library(caret)
+library(usmap) #import the package
+library(ggplot2) #use ggplot2 to add layer for visualization
+
+```
+```{r, echo = F}
+print_output <- function(output, cex = 0.7) {
+  tmp <- capture.output(output)
+  plot.new()
+  text(0, 1, paste(tmp, collapse='\n'), adj = c(0,1), family = 'mono', cex = cex)
+  box()
+}
+
+```
+# Introduction
++ Variables play a significant role in determining life expectancy in some instances while in others show little significance. Life expectancy is determined by many factors such as resources, school, adult mortality, GDP, diseases, countries and so on. The goal is to determine which factors most influence and can help estimate the life expectancy with the best accuracy. 
+
+#Data Description:
++ The variables that were analyzed were: country, year, status, life expectancy, adult mortality, infant deaths, alcohol, percentage expenditure, hepatitis B, measles, BMI, under five deaths, polio, total expenditure, diphtheria, HIV/AIDS, GDP, population, thinness 10-19 years, thinness 5-9 years, Income composition of resources, schooling
+
+
+
+# EDA
+#### **Looking into the data**
++ There are 2,938 data entries
++ Out of 22 variables only 2 are categorical, the rest are numerical
++ Country is repeated, because that is recorded per yer year for each country, but we will ignore that
++ No row is repeated 
+
+
+```{r, include=FALSE}
+lifeExp=read.csv("~/Documents/Statistics 2/LifeExpectancyData.csv")
+
+# summary(data)
+#print(head(lifeExp)[1,])
+
+# 22 variables
+dim(lifeExp)[2]
+
+# 2938 data size
+nrow(lifeExp)
+
+# no duplicates
+any(duplicated(lifeExp))
+
+attach(lifeExp)
+```
+
+#### **Statistics**
++ There are a lot of NA's and some skewness in most variables
+
+```{r, warning = F, echo=FALSE}
+library(Hmisc)
+print(describe(lifeExp))
+```
+
+```{r, echo=FALSE, results='asis'}
+#  cat("\\section{Part:", 1, "}")
+#  cat("\\begin{verbatim}")
+#  print(summary(lifeExp))
+#  cat("\\end{verbatim}")  
+```
+
+
+#### **Display of missing values**
+
++ Most of the missing attributes make sense as they seem to be zero's. 
++ The only ones that need to be looked at are Population and Life Expectancy.
+
+```{r echo=FALSE, fig.height = 7, fig.width = 7, fig.align = "center"}
+#Total missing values 
+#sapply(data, function(x) all_miss=sum(is.na(x)))
+
+#create data frame to visualize
+all_missing=data.frame(Count=(c(sapply(lifeExp, function(x) all_miss=sum(is.na(x))))), columns=names(lifeExp))
+
+all_missing[all_missing == "Income.composition.of.resources"] = "IncomeResources"
+all_missing[all_missing == "percentage.expenditure"] = "%Expenditure"
+all_missing[all_missing =="thinness..1.19.years"]="thinness10-19"
+all_missing[all_missing =="thinness..5.9.years"]="thinness5-9"
+
+
+#Plot!
+all_missing %>% ggplot(aes(x=Count, y=columns, fill=columns)) + geom_col(position = "dodge") +
+  xlab("Total amount of missing values") + ggtitle("Missing values per variable") +
+  geom_text(size=3,position = position_dodge(width= .5), aes(label=Count),vjust=0.5, hjust = -0.20) +
+  theme(axis.text = element_text(size = 10)) + ylab("Variable")+ theme(legend.position="none") +  theme(panel.grid.major = element_blank(), axis.title.y = element_blank(),panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(
+  plot.title = element_text(color = "black", size = 14, face = "italic", hjust=0.5))
+
+```
+
+#### **Dealing with missing values**
+#### **Setting categorical variables as factors**
+#### **Replacing some of the data that was set as NA but its really 0 based on analysis of the data**
+
++ The response variable life expectancy had some missing values. After analysis it was imputed with the mean of the Life Expectancy, filtered by the year, diseases and other factors that they all had in common which was 73.55.
++ The only variables that kept the missing attributes and were not imputed were Adult Mortality, Population, BMI, GDP. 
++ The reasoning is on the code below but due to Adult Mortality, BMI and GDP having very few data missing all rows with their missing values were deleted.
++ Since population had too many missing variables and couldn't be imputed, that variable was dropped from the data. We did run a linear regression to check if population was important before the deletion of this explanatory variable and found that it did not have a significant statistical value, therefore it confirmed the idea of removing the variable.
++ We set Country and Status as factors since they are categorical variables
+
+```{r include=FALSE}
+
+#There are countries that have no Population for any of the years so we can't impute with median
+#lifeExp %>%  filter(!is.na(lifeExp$Population)) %>% group_by(Country) %>% summarize(mean_pop=mean(Population))
+
+#There are a lot of missing data for Population and no pattern was found, lets look and see if its an important variable and revise if NA need to be fixed 
+lifeExp %>% filter (is.na(lifeExp$Population))  
+
+
+#Check data with missing Life.expectancy
+lifeExp %>% filter (is.na(lifeExp$Life.expectancy))  
+
+#Missing values for life expectancy showed all were 2013, developing, 0 measles, 0 infant.deaths etc, finding it's stats to fill missing data with its mean or median 
+
+#Median is 73.85 and mean is 73.55 which doesn't show skewness, so we can go with either.
+summary(lifeExp %>% filter (Year==2013 & Status=="Developing" & Measles==0 & infant.deaths==0 & under.five.deaths==0 & HIV.AIDS ==0.1)  %>% select(Life.expectancy))
+
+#Replacing with the mean 73.55
+lifeExp$Life.expectancy[is.na(lifeExp$Life.expectancy)] <- 73.55
+
+#All of these NA's are 0
+lifeExp$Schooling[is.na(lifeExp$Schooling)] <- 0
+lifeExp$Hepatitis.B[is.na(lifeExp$Hepatitis.B)] <- 0
+lifeExp$Polio[is.na(lifeExp$Polio)] <- 0
+lifeExp$Diphtheria[is.na(lifeExp$Diphtheria)] <- 0
+lifeExp$Total.expenditure[is.na(lifeExp$Total.expenditure)] <- 0
+lifeExp$Income.composition.of.resources[is.na(lifeExp$Income.composition.of.resources)] <- 0
+lifeExp$Alcohol[is.na(lifeExp$Alcohol)] <- 0
+
+
+#South Sudan, San Marino, Monaco have missing data for thinness in kids
+#lifeExp %>% filter (is.na(lifeExp$thinness.5.9.years))  
+
+```
+
+#### **Checking zero's and empty strings**
+
++ The amount of zero's for each variable made sense
++ There are no empty string or missing for the categorical columns
+
+```{r echo=FALSE, fig.height = 8, fig.width = 8, fig.align = "center"}
+#Numerical Columns that have 0
+#obtaining all columns that are continuous, 20
+numData=lifeExp %>% select(colnames(lifeExp)[!grepl('factor|logical|character',sapply(lifeExp,class))])
+
+#count total of 0 per column
+# colSums(numData == 0)
+zerodata=data.frame( numData=colnames(numData),count=colSums(numData == 0)) %>% filter(count>0)
+  
+#graph zero's  
+plota=zerodata %>%  ggplot(aes(x=count, y=numData, fill=numData)) + geom_col(position = "dodge") +
+  xlab("Total amount of 0") + ggtitle("Total amount of zero's per variable") +
+  geom_text(size=3,position = position_dodge(width= .5), aes(label=count),vjust= .5, hjust = -0.2) +
+  theme(axis.text = element_text(size = 10)) + ylab("Variable")+ theme(legend.position="none") +  theme(aspect.ratio = .5,panel.grid.major = element_blank(), axis.title.y = element_blank(),panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(
+  plot.title = element_text(color = "black", size = 14, face = "italic", hjust=0.5))
+grid.arrange(plota, ncol=1)
+
+
+#Categorical Data
+categoricalData=lifeExp %>% select(-colnames(lifeExp)[!grepl('factor|logical|character',sapply(lifeExp,class))])
+
+
+print("Empty strings")
+#check empty string, or NA
+# no empty strings or missing values 
+sapply(categoricalData, function(x) all(is.na(x) | x == '' |  x == ' ' )) #there are none!! :)
+
+# Changing to factors just in case
+lifeExp$Country=as.factor(lifeExp$Country)
+lifeExp$Status=as.factor(lifeExp$Status)
+
+```
+
+
+
+#### **Relationships and correlations**
+#### **Numeric variable vs target variable**
++ Adult Mortality and Life Expectancy have high correlation as one would expect.
++ BMI, GDP, Percentage Expenditure, Measles, Thinness, HIV/AIDS and Adult mortality have correlation with our response. We should expect these variables to be significant.
++ However, we can see some multicollinearity therefore some may have to be dropped or not be as important since it may be another variable that is driving the correlation.
+
+```{r echo=FALSE}
+
+library(corrplot)
+
+# Without removing columns with NA's
+#colnames(remoNa)[colnames(remoNa) == "Income.composition.of.resources"] <- "IncomeResources"
+#remoNa=numData %>% select(-Adult.Mortality,-BMI,-GDP, -Population, -thinness..1.19.years, -thinness.5.9.years)
+#corrplot(cor(remoNa), type = "upper", order = "hclust", 
+#         tl.col = "black", sig.level = 0.05,insig = "blank")
+
+# Clean numeric Data
+newData=numData %>% select(-Population)
+# Removing all NA's in Adult.Mortality, BMI, thinness..1.19.years,thinness.5.9.years,GDP
+newData= na.omit(newData)
+colnames(newData)[colnames(newData) == "Income.composition.of.resources"] <- "IncomeResources"
+
+corrplot(cor(newData), type = "upper", order = "hclust", 
+         tl.col = "black", sig.level = 0.05,insig = "blank")
+```
+
+#### **More detail plots of each explanatory variable vs response variable**
++ Schooling , Income of Resources, DBMI have a strong positive linear trend with the response variable
++ Diphtheria and Polio immunization have a positive linear trend
++ Thinness of both 10 to 19 and 5 to 9 years old, as well as HIV/AIDS and Measles have a negative linear trend as expected, although it may need to logged based on the plots
++ Adult Mortality has a strong negative trend
++ Year seems to have light but constant linear increase
++ GDP does seems to have somewhat a linear trend it may also need to be logged
++ Total Expenditure Health doesn't appear to have a trend which is interesting
++ As for the categorical, there does appear to be a difference in Developed vs Developing Country having Developed with higher Life Expectancy and smaller range.
+
+```{r, echo=FALSE, warning=FALSE}
+library(GGally)
+library(car) 
+#ggpairs(numData, aes(alpha = 0.4))
+#pairs(lifeExp[,-c(1,3)],col=Status)
+
+#Clean all ata
+cleaned_LifeExpec=lifeExp %>% select(-Population)
+# Removing all NA's in Adult.Mortality, BMI, thinness..1.19.years,thinness.5.9.years,GDP
+cleaned_LifeExpec= na.omit(cleaned_LifeExpec)
+
+attach(cleaned_LifeExpec)
+
+par(mfrow=c(2,3))
+plot(Life.expectancy~., data = cleaned_LifeExpec, palatte=Status)
+
+```
+
+#### **Further updates to the data based on earlier findings**
+
++ Created a new variable called LogYouthThinness, logging the sum of both Thinness..1-19 Years and Thinness 5-9 Years variables. Per graph the linear relationship is somewhat clearer.
++ Doing the log of GDP , HIV/AIDS and Percentage Expenditure also helped visualize the relationship with the response variable.
++ Adding a quadratic term to Adult Mortality and Polio were indeed a better fit for the these variables.
++ If you want to see the graphs once these changes are applied check the
+
+```{r, include=FALSE}
+# Create new variable after analysis
+# Both Thinness variable have very similar patterns and 
+cleaned_LifeExpec$LogYouthThinness=log(cleaned_LifeExpec$thinness..1.19.years + cleaned_LifeExpec$thinness.5.9.years)
+cleaned_LifeExpec <- subset(cleaned_LifeExpec, select = -c(thinness.5.9.years, thinness..1.19.years))
+
+# Odd it kinds splits in 3 lines as if it was 3 groups
+# plot(Life.expectancy~log(Adult.Mortality), data = cleaned_LifeExpec)
+
+# Option for model 2
+plot(Life.expectancy~log(GDP), data = cleaned_LifeExpec)
+plot(Life.expectancy~log(HIV.AIDS), data = cleaned_LifeExpec)
+#Percentage Expenditure looks as if it has a linear relationship now
+plot(Life.expectancy~log(percentage.expenditure), data = cleaned_LifeExpec)
+
+#option for model 3
+plot(Life.expectancy~Adult.Mortality + I(Adult.Mortality^2), data = cleaned_LifeExpec)
+plot(Life.expectancy~Polio + I(Polio^2), data = cleaned_LifeExpec)
+
+#It works but not that important of a variable
+#plot(Life.expectancy~log(under.five.deaths), data = cleaned_LifeExpec)
+
+#plot(Life.expectancy~ Country+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling, data = cleaned_LifeExpec, palatte=Status)
+```
+
+
+# Objective 1
+
+#### **Multilinear xRegression**
++ Let's confirm if the variables seen above influence life expectancy and obtain the explanatory variables to create a model to predict life expectancy
+
+#### **We will start with backwards and forward model to check variables**
+
++ Variables selected by forward were fewer than those for backwards. Income Composition of Resources was the only variables in forward that wasn't in backwards selection. 
++ Forward choose 11 variables while backwards 15 variables
++ The Adjusted R squared was the same for both  models .96
+
+```{r include=FALSE}
+library(olsrr)
+
+# Running model with all variables
+fullClean.model<-lm(Life.expectancy~.,data=cleaned_LifeExpec)  
+#using all the explanatory variable to see what it selects
+# Adj. R-Squared          0.819
+forwarSelection=ols_step_forward_p(fullClean.model,penter=0.05,details=TRUE)
+
+#96 adjusted r squared
+forwardModel<-lm(Life.expectancy~Country + Adult.Mortality + Income.composition.of.resources + Schooling + Year + HIV.AIDS + Hepatitis.B+Measles+under.five.deaths+ infant.deaths+ LogYouthThinness,data=cleaned_LifeExpec)
+#vif(forwardModel)[,3]^2
+
+backwardSelection=ols_step_backward_p(fullClean.model,prem=0.05,details=TRUE)
+toString(names(cleaned_LifeExpec))
+#Status+Life Expectancy, Alcohol, Percentage Expenditure, Infant Deaths, GDP
+
+backwardModel<-lm(Life.expectancy~Country + Year +Status+Life.expectancy+Adult.Mortality+ infant.deaths+ Alcohol+ percentage.expenditure+ Hepatitis.B+ Measles+ under.five.deaths+  HIV.AIDS + GDP + Schooling+ LogYouthThinness, data=cleaned_LifeExpec)
+#revif(backwardModel)
+# Adj. R-Squared          0.819
+
+#ols_step_backward_p(reduced,prem=0.05,details=TRUE)
+```
+
+
+
+##### **Running models using earlier analysis and results**
+
+
++ Since we saw a relationship between Developed and Developing with Life Expectancy on the graphs of the EDA, will keep it in the model
++ Under Five, Infant Death, and Measles look to be highly correlated, which we saw in the heatmap EDA. Also, after doing models we found that having both in a model lead to some not being statically significant values and high VIF so we so we have decided to go with Measles and not use drop Under Five or Infant Mortality from model per selection method priority and EDA analysis
++ After running models we did see that having Country affected a lot of explanatory variables and thus created a model without Country using: **Status+  BMI+  Income.composition.of.resources+GDP+ Year+ Adult.Mortality + Hepatitis.B  +HIV.AIDS+ Schooling + under.five.deathsIDS, schooling**
++ Another one with Country  using **Country+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling**
++ An a iteration of each linear-linear and log-linear
+
+```{r include= FALSE}
+
+ModelList=c()
+ModeladjRsqr=c()
+ModelAIC=c()
+ModelBIC=c()
+passAssumption=c()
+simpleModel=c()
+countHighVIF=c()
+logLinear=c()
+
+
+#Select vairiables significant using summary
+  #summary(fullClean.model)
+#Run model with significant attributes
+#Infant Deaths has to high VIF just like BMI and Income so it was removed
+
+#linear linear including Country
+WCountry=lm(Life.expectancy~  Country+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling , data=cleaned_LifeExpec)
+ModelList=append(ModelList,"WCountry")
+ModeladjRsqr=append(ModeladjRsqr, summary(WCountry)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(WCountry))
+ModelBIC=append(ModelBIC, BIC(WCountry))
+simpleModel=append(simpleModel,"Yes")
+logLinear=append(logLinear,"No")
+
+
+#Log linear model including Country
+LogLinearWCountry=lm(log(Life.expectancy)~  Country+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"LogLinearWCountry")
+ModeladjRsqr=append(ModeladjRsqr, summary(LogLinearWCountry)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(LogLinearWCountry))
+ModelBIC=append(ModelBIC, BIC(LogLinearWCountry))
+simpleModel=append(simpleModel,"Yes")
+logLinear=append(logLinear,"Yes")
+
+#Removing Country since it made School and various other variables with high multicollinearity
+# Using all important explanatory variables
+WithoutCountry=lm( Life.expectancy ~  Status+  BMI+  Income.composition.of.resources+GDP+ Year+ Adult.Mortality + Hepatitis.B  +HIV.AIDS+ Schooling + Measles, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"WithoutCountry")
+ModeladjRsqr=append(ModeladjRsqr, summary(WithoutCountry)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(WithoutCountry))
+ModelBIC=append(ModelBIC, BIC(WithoutCountry))
+simpleModel=append(simpleModel,"Yes")
+logLinear=append(logLinear,"No")
+
+
+#Only most important explanatory variables without Country
+loglinearWithoutCountry=lm(log(Life.expectancy)~  Status+  BMI+  Income.composition.of.resources+GDP+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"loglinearWithoutCountry")
+ModeladjRsqr=append(ModeladjRsqr, summary(loglinearWithoutCountry)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(loglinearWithoutCountry))
+ModelBIC=append(ModelBIC, BIC(loglinearWithoutCountry))
+simpleModel=append(simpleModel,"Yes")
+logLinear=append(logLinear,"Yes")
+
+#Only most important explanatory variables
+reducedWithoutCountry=lm((Life.expectancy)~  Status+  BMI+  Income.composition.of.resources+GDP+ Year+ Adult.Mortality + Hepatitis.B + Measles +HIV.AIDS+ Schooling, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"reducedWithoutCountry")
+ModeladjRsqr=append(ModeladjRsqr, summary(reducedWithoutCountry)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(reducedWithoutCountry))
+ModelBIC=append(ModelBIC, BIC(reducedWithoutCountry))
+simpleModel=append(simpleModel,"Yes")
+logLinear=append(logLinear,"No")
+
+#residual_ <- resid(reduced)
+#plot(cleaned_LifeExpec$Life.expectancy, residual_, ylab="Residuals", xlab="Mass", main="Residuals versus Mass")
+#abline (0,0)
+
+```
+
+#### **Check Multicollinearity for the models without new variable or modified explanatory variables**
++  Youth and Schooling somewhat high VIF's for School and logYouthThinness
++ There was no multicollinearity for the models without Country having the variables earlier filtered out.
+```{r include=FALSE}
+#sequene
+#WCountry,LogLinearWCountry,WithoutCountry,loglinearWithoutCountry,reducedWithoutCountry
+#without country
+vif(WCountry)[,3]^2
+#plot(WCountry)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,1)
+
+vif(LogLinearWCountry)[,3]^2
+#plot(LogLinearWCountry)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,1)
+
+vif(WithoutCountry)
+#plot(WithoutCountry)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,0)
+
+#Youth and Schooling have high VIF 11 and 12
+vif(loglinearWithoutCountry)
+#plot(loglinearWithoutCountry)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,0)
+
+vif(reducedWithoutCountry)
+#plot(reducedWithoutCountry)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,0)
+
+```
+
+## Models 2 adding complexity: Logging HIV/AIDS and GDP and including the new variable logYouthThinness
++ Models without Country and the updates, ended up with BMI no longer being significant, just like year. We dropped BMI but kept year due to practical significance.
+
++ Models with Country:
++ Income Composition of Resources, log(GDP), and Status needed to be dropped due to not being significant
++ Logging of HIV lead to very high VIF's so we did not log HIV and only kept the new variable when adding country
+
+```{r, include=FALSE}
+#logGDP, HIV.AIDS, percentage.expenditure
+
+
+#Year no longer becomes significant just like BMI, BMI was dropped but kept year per analysis
+WithLogHIVGDP_and_newVlogVariable=lm(Life.expectancy ~  Status+  Income.composition.of.resources+log(GDP)+ Adult.Mortality+Year + Hepatitis.B  + log(HIV.AIDS) +Schooling + under.five.deaths + Measles +LogYouthThinness, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"WithLogHIVGDP_and_newVlogVariable")
+ModeladjRsqr=append(ModeladjRsqr, summary(WithLogHIVGDP_and_newVlogVariable)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(WithLogHIVGDP_and_newVlogVariable))
+ModelBIC=append(ModelBIC, BIC(WithLogHIVGDP_and_newVlogVariable))
+summary(WithLogHIVGDP_and_newVlogVariable)
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"No")
+#85 adjusted R^2
+
+#Year no longer becomes significant just like BMI, BMI was dropped but kept year per analysis
+loglinearWithLogHIVGDP_and_newVlogVariable=lm(log(Life.expectancy)~  Status +  Income.composition.of.resources+ log(GDP) + Adult.Mortality + Hepatitis.B  + log(HIV.AIDS)+ Schooling + Measles +under.five.deaths+ LogYouthThinness , data=cleaned_LifeExpec)
+ModelList=append(ModelList,"loglinearWithLogHIVGDP_and_newVlogVariable")
+ModeladjRsqr= append(ModeladjRsqr, summary(loglinearWithLogHIVGDP_and_newVlogVariable)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(loglinearWithLogHIVGDP_and_newVlogVariable))
+ModelBIC=append(ModelBIC, BIC(loglinearWithLogHIVGDP_and_newVlogVariable))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"Yes")
+#summary(loglinearWithLogHIVGDP_and_newVlogVariable)
+#84 adjustd r^2
+
+#Linear linear including country
+# Income Composition of Resources,  + log(GDP), status needed to be dropped due to not being significant
+# logging of HIV lead to very high VIF's so we only kept the new variable when adding Country
+countryWith_newVlogVariable=lm(Life.expectancy~  Country+ Year+ Adult.Mortality + Hepatitis.B  + (HIV.AIDS)+ Schooling + Measles + LogYouthThinness, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"countryWith_newVlogVariable")
+ModeladjRsqr=append(ModeladjRsqr, summary(countryWith_newVlogVariable)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(countryWith_newVlogVariable))
+ModelBIC=append(ModelBIC, BIC(countryWith_newVlogVariable))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"No")
+
+#Log linear model including Country
+LogLinearcountryWith_newVlogVariable=lm(log(Life.expectancy)~  Country+ Year+ Adult.Mortality +  HIV.AIDS+ Hepatitis.B + Measles + Schooling + LogYouthThinness, data=cleaned_LifeExpec)
+ModelList=append(ModelList,"LogLinearcountryWith_newVlogVariable")
+ModeladjRsqr=append(ModeladjRsqr, summary(LogLinearcountryWith_newVlogVariable)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(LogLinearcountryWith_newVlogVariable))
+ModelBIC=append(ModelBIC, BIC(LogLinearcountryWith_newVlogVariable))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"Yes")
+#95.39 adjusted r^2
+
+```
+
+### Checking multicollinearity
++ Without Country all VIF coefficient are still good regardless of the new variable and logging GDP and HIV
++ With Country VIF of School and the new variable were high (11,12) but that is better than when including log of HIV, at the point it was way higher.
+
+```{r include=FALSE}
+
+#WithLogHIVGDP_and_newVlogVariable,loglinearWithLogHIVGDP_and_newVlogVariable,countryWith_newVlogVariable,LogLinearcountryWith_newVlogVariable
+
+#Without country all perfect VIF
+vif(WithLogHIVGDP_and_newVlogVariable)
+#plot(WithLogHIVGDP_and_newVlogVariable)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,0)
+
+#No high VIF
+vif(loglinearWithLogHIVGDP_and_newVlogVariable)
+#plot(loglinearWithLogHIVGDP_and_newVlogVariable)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,0)
+
+
+#Only School has High VIF
+vif(countryWith_newVlogVariable)[,3]^2
+#plot(countryWith_newVlogVariable)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,2)
+
+#Youth and Schooling have high VIF 11 and 12
+vif(LogLinearcountryWith_newVlogVariable)[,3]^2
+#plot(LogLinearcountryWith_newVlogVariable)
+#VIF for logYoughtTHinees becomes too high
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,2)
+
+```
+
+## Models 2.2 adding complexity by adding square term to Adult Mortality as well as Polio and new variable
+
++ Adding the square term to Polio lead to very high VIF so it was removed. 
++ Keeping HIV/AIDs with the square term of Adult Mortality lead to very high VIF's as well so HIV was removed.
+
++ We do see high VIF in the models produced but they aren't too high and the high influence of Adult Mortality and Education with Life Expectancy makes sense so we saved the models for the final comparison
++ For the rest of the optional model adding a square term to the model made the VIF too high
+
+
+```{r, include=FALSE}
+
+# The VIF of Adult Mortality is 12.
+reducedSQR=lm(Life.expectancy ~  Status + BMI + Income.composition.of.resources + (GDP) + Year + Hepatitis.B  + HIV.AIDS + Schooling + Measles  + LogYouthThinness + Adult.Mortality + I(Adult.Mortality^2), data=cleaned_LifeExpec)
+ModelList=append(ModelList,"reducedSQR")
+ModeladjRsqr=append(ModeladjRsqr, summary(reducedSQR)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(reducedSQR))
+ModelBIC=append(ModelBIC, BIC(reducedSQR))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"No")
+
+#Log linear leads to the square term to be insignificant so it  will not be included in this model
+LogLinearreducedSQR=lm(log(Life.expectancy) ~  Status+  BMI +  Income.composition.of.resources+ (GDP) + Year + Hepatitis.B + Measles + (HIV.AIDS)+ Schooling + LogYouthThinness + Adult.Mortality + I(Adult.Mortality^2), data=cleaned_LifeExpec)
+#ModelList=append(ModelList,"reducedloglinearWmostImportantSqr")
+#ModeladjRsqr=append(ModeladjRsqr, summary(LogLinearreducedSQR)$adj.r.squared) 
+#summary(LogLinearreducedSQR)$adj.r.squared
+
+#Linear linear including country
+# New loghtYouthTHinnes lead to high VIF so it was removed
+reducedWCountrySqr=lm(Life.expectancy~  Country+ Year+ Adult.Mortality + Hepatitis.B + Measles + Schooling + Adult.Mortality + I(Adult.Mortality^2), data=cleaned_LifeExpec)
+ModelList=append(ModelList,"reducedWCountrySqr")
+ModeladjRsqr=append(ModeladjRsqr, summary(reducedWCountrySqr)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(reducedWCountrySqr))
+ModelBIC=append(ModelBIC, BIC(reducedWCountrySqr))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"No")
+
+#Log linear model including Country
+reducedLogLinearWCountrySqr=lm(log(Life.expectancy)~  Country+ Year+ Adult.Mortality + Hepatitis.B + Measles + Schooling + Adult.Mortality + I(Adult.Mortality^2), data=cleaned_LifeExpec)
+ModelList=append(ModelList,"reducedLogLinearWCountrySqr")
+ModeladjRsqr=append(ModeladjRsqr, summary(reducedLogLinearWCountrySqr)$adj.r.squared)
+ModelAIC=append(ModelAIC, AIC(reducedLogLinearWCountrySqr))
+ModelBIC=append(ModelBIC, BIC(reducedLogLinearWCountrySqr))
+simpleModel=append(simpleModel,"No")
+logLinear=append(logLinear,"Yes")
+```
+
+### Checking multicollinearity 
++ With Country included Square term the VIF's of all models with Country became too high for to many variables
++ For those models without Country, the square term of Adult Mortality was still good and those 
+
+```{r include=FALSE}
+#rreducedSQR,reducedWCountrySqr,reducedLogLinearWCountrySqr
+
+#Without Country all have perfect VIF
+#Adult Mortality is too high
+
+vif(reducedSQR)
+passAssumption=append(passAssumption,"No")
+countHighVIF=append(countHighVIF,1)
+#plot(reducedSQR)
+
+vif(reducedWCountrySqr)[,3]^2
+countHighVIF=append(countHighVIF,3)
+#plot(reducedWCountrySqr)
+passAssumption=append(passAssumption,"Yes")
+
+
+vif(reducedLogLinearWCountrySqr)[,3]^2
+#plot(reducedLogLinearWCountrySqr)
+passAssumption=append(passAssumption,"Yes")
+countHighVIF=append(countHighVIF,3)
+
+
+#Youth and Schooling have high VIF 11 and 12
+#vif(reducedWCountrySqr)[,3]^2
+#vif(reducedLogLinearWCountrySqr)[,3]^2
+```
+```{r, incude=FALSE}
+#with interaction
+
+#Log linear model including Country
+includingInteraction=lm(log(Life.expectancy)~  Country+ Year+ Year*Country+ Adult.Mortality + Schooling,  data=cleaned_LifeExpec)
+summary(includingInteraction)
+plot(includingInteraction)
+
+vif(includingInteraction)[.3]^2
+
+AIC(includingInteraction)
+BIC(includingInteraction)
+```
+
+## Models 2.3 addding an interaction
++ When adding an interaction between country and year it lead to high coefficient which we thought was great but the VIF go to infinity so we didn't proceed with the model
+
+##### **We saved the results of every model and checked the assumption as each model was created, next we created a data frame with the results**
+
+```{r, echo=F}
+results_models=data.frame(ModelType=ModelList, R_Sqr=ModeladjRsqr, AIC=ModelAIC, BIC=ModelAIC, HighVIF= countHighVIF, SimpleModel=simpleModel,Assumptions=passAssumption, logLinearModel=logLinear)
+
+print("First set of models filtering log-linear models")
+results_models %>% filter(SimpleModel=="Yes" & logLinear=="Yes" ) %>% arrange(desc(R_Sqr)) %>% select(ModelType, R_Sqr)
+
+print("Second set of models filtering log-linear models")
+results_models %>% filter( SimpleModel=="No" & logLinear=="Yes") %>% arrange(desc(R_Sqr)) %>% select(ModelType, R_Sqr, HighVIF)
+
+plot(exp(LogLinearcountryWith_newVlogVariable$fitted.values),cleaned_LifeExpec$Life.expectancy,xlab="Predicted",ylab="Life Expectancy")
+lines(c(0,400000),c(0,400000),col="red")
+```
+
+#### **Check Assumptions**
+
++ While running each model, the assumptions were checked, but we will go through this check again for the top normal model and for the complex model
++ When plotting the predicted results and the actual life expectancy values we found that it was necessary to only look at the Log Linear models, otherwise it wasn't giving a good prediction.
+
+### As for the best model on the first models obtained from EDA and selection models was LogLinearcountryWith_newVlogVariable
+
+ +Explanatory variables used: Country + Year + Adult Mortality + 
+    HIV/AIDS + Hepatitis B + Measles + Schooling + LogYouthThinness
+    
++ We do nave 2 high VIF variables which are School and LogYouthThinness which are variables that practically make sense. Actually all of the predictors practically make sense as well 
++ After checking the residual plots we found normality, equal variance and we have assumed independence. There was o high VIF in this model and the Cooks plot did not show any high leverage and high influence points.
++ All explanatory variables were significant meaning that all had an influence on Life Expectancy
+
++ life expectancy= -2.86 + countries......+ 3.42 Year - 3.45 Adult.Mortality - 6.60 HIV.AID + 1.832 HepatitisB -3.89 Measles+ 2.587 schooling + e^(6.48) YouthTHinness
+
+***Coefficients significance***
+
++ The hypothesis is whether the linear model provides a better fit than without predictors having the null hypothesis as it not having any effect.
++ The F-test for the whole model had a significant p-value: < 2.2e-16 suggesting that it has it has a linear relationship.
++  The t-test for each of the coefficients was significant as you can see on the summary of the model.
++  The adjusted R-squared ofthe model is 0.9637, an AIC of -7019.453 and a BIC of -6949.754
++ Cross validation on the train data lead to the following results:
++ RMSE        Rsquared   MAE      
++  0.03070459  0.9558943  0.0189076
+
+The data suggest that each year increase is associated with an increase in median life expectancy by a factor of 1.000
+Therefore a 95% confidence interval for the multiplicative chance in median life expectancy is 
+
++ The data suggest that one unit increase in year is associated with a multiplicative increase change of e^(3.427e-03)=1.003 in median of life expectancy. There is 95% confidence interval for the multiplicative chance in median life expectancy of 1.00308219623 to 1.00378372829.Besides it having a statistically significant p value, it is also practically significant. It makes sense that every year life expectancy increases. There is 95%
+
++ A one unit increase in Adult Mortality is associated with a multiplicative decrease change of e^(3.455e-05)= 1.000034in median of life expectancy.There is 95% confidence interval for the multiplicative chance in median life expectancy of -1.00001994926 to  -1.00004914803. Besides it having a statistically significant p value, it is also practically significant. It makes sense that if adult mortality increases that life expectancy increases as well.
+
++ A one unit increase in HIV.AID is associated with a multiplicative decrease change of e^(6.604e-03)= 1.006 in median of life expectancy.There is 95% confidence interval for the multiplicative chance in median life expectancy of -1.0061 to -1.007088. Besides it having a statistically significant p value, it is also practically significant. The higher HIV IDS leads to a decrease in life expectancy.
+
++ A one unit increase in Hepatitis.B is associated with a multiplicative positive change of e^(1.832e-04)=1.000183 in median of life expectancy.There is 95% confidence interval for the multiplicative chance in median life expectancy of 1.0001 to 1.0002.Besides it having a statistically significant p value, it is also practically significant. The higher the immunization then higher the life expectancy.
+
++ A one unit increase in Measles is associated with a multiplicative decrease change of e^(3.892e-07)=1.0000003 in median of life expectancy.There is 95% confidence interval for the multiplicative chance in median life expectancy of -1.00000023962 to -1.00378140554. Besides it having a statistically significant p value, it is also practically significant. The more cases of Measles leads to a decrease in life expectancy.
+
++ A one unit increase in Schooling is associated with a multiplicative positive change of e^(2.587e-03)= 1.002 in median of life expectancy.There is 95% confidence interval for the multiplicative chance in median life expectancy of  1.00140067203 to 1.00378140554. Besides it having a statistically significant p value, it is also practically significant. The more education leads to a higher the life expectancy.
+
++ A doubling of youth thinness is associated with the 2^6.481e-03=1.00450239232 multiplicative increase in median of life expectancy.There is 95% confidence interval for the doubling change in median life expectancy of 1.0018177359 to 1.0071947513. This coefficient is statistically significant however we are indecisive as of it being practically significant. If we are talking about a country that has a very high mean BMI then 2 standard deviations lower is not so bad which would make this practically significant however for those countries with a normal or low BMI then 2 standard deviations lower would mean that the increase of youth thinness could lead to lower life expectancy. 
+
++ As for the country coefficients we can see that it each country does have an effect of the life expectancy were some are positive and other negative. 
+
+
+```{r, include=FALSE}
+
+library(caret)
+index<-sample(1:dim(cleaned_LifeExpec)[1],round(.85 * dim(cleaned_LifeExpec)[1]))
+trainLife<-cleaned_LifeExpec[index,]
+testLife<-cleaned_LifeExpec[-index,]
+
+train_control <- trainControl(method = "repeatedcv",
+                            number = 10, repeats = 5)
+# training the model by assigning sales column
+# as target variable and rest other column
+# as independent variable
+model <- train(log(Life.expectancy) ~ Country + Year + Adult.Mortality + 
+    HIV.AIDS + Hepatitis.B + Measles + Schooling + LogYouthThinness, data = trainLife,
+               method = "lm",
+               trControl = train_control)
+ 
+# printing model performance metrics
+# along with other details
+#print(model)
+```
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+plot(LogLinearcountryWith_newVlogVariable)
+summary(LogLinearcountryWith_newVlogVariable)
+
+plot(exp(LogLinearcountryWith_newVlogVariable$fitted.values),cleaned_LifeExpec$Life.expectancy,xlab="Predicted",ylab="Life Expectancy")
+lines(c(0,400000),c(0,400000),col="red")
+#AIC(LogLinearcountryWith_newVlogVariable)
+#BIC(LogLinearcountryWith_newVlogVariable)
+
+```
+
+
+
+```{r, include=FALSE}
+### **Here is the confidence interval**
+#summary(reduced)
+confint(LogLinearcountryWith_newVlogVariable, alpha=.05)
+#length(unique(cleaned_LifeExpec$Country))
+```
+
+
++ From the second set of models the best one that had a good prediction with 0 High VIF was loglinearWithLogHIVGDP_and_newVlogVariable which excluded country
++ The hypothesis is whether the linear model provides a better fit than without predictors having the null hypothesis as it not having any effect.
++ The F-test for the whole model had a significant p-value: < 2.2e-16 suggesting that it the model is a good fit.
++ The t-test for each of the coefficients was significant as you can see on the summary of the model.
++ The adjusted R-squared of the model is 0.84,, an AIC of -10233 and a BIC of 9280, all lower than the first model
++ The cross validation on the train data lead to the following results
++  RMSE        Rsquared   MAE      
++  0.05801915  0.8461734  0.0412418
+
++ Explanatory variables used: Status + Income Composition of Resources + 
+    log(GDP) + Year + Adult Mortality + Hepatitis B + log(HIV.AIDS) + 
+    Schooling + Measles + Under Five Deaths + LogYouthThinness
++ After checking the residual plots we found normality, equal variance and we have assumed independence. There was zero high VIF in this model and the Cooks plot did not show any high leverage nor high influence points.
++ Due to the model having Country the adjust R'2 is not as high but having dropped 152 variables and still have good r^2 is pretty good.
++ All explanatory variables were significant meaning that all had an influence on Life expectancy
+
+```{r, include=FALSE}
+
+model2 <- train(log(Life.expectancy) ~ Status + Income.composition.of.resources + 
+    log(GDP) + Adult.Mortality + Hepatitis.B + log(HIV.AIDS) + 
+    Schooling + Measles + under.five.deaths + LogYouthThinness, data = trainLife,
+               method = "lm",
+               trControl = train_control)
+ 
+# printing model performance metrics
+#print(model2)
+```
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+plot(loglinearWithLogHIVGDP_and_newVlogVariable)
+summary(loglinearWithLogHIVGDP_and_newVlogVariable)
+
+plot(exp(loglinearWithLogHIVGDP_and_newVlogVariable$fitted.values),cleaned_LifeExpec$Life.expectancy,xlab="Predicted",ylab="Life Expectancy")
+lines(c(0,400000),c(0,400000),col="red")
+
+#AIC(LogLinearcountryWith_newVlogVariable)
+#BIC(LogLinearcountryWith_newVlogVariable)
+
+#plot(reduced)
+```
+
+#### **KNN**
+
++ The non parametric model, KNN using the predictors for the first model lead to  R^2 of 0.96 and a RMSE of 65.53
++ Cross validation results are these:
+
+  k  RMSE        Rsquared   MAE       
+  5  0.03290965  0.9500103  0.01910255
+  7  0.03676166  0.9380592  0.02239578
+  9  0.04162660  0.9204193  0.02633319
+  
++ The lowest K-folds which were 5 lead to the best results with lowest RMSE, lowest MAE and higher Rsquared 
++ When comparing to the parametric multi-linear model that had the same predictors we saw very similar results although by small decimal slightly better RMSE, Rsquared and MAE.
+**Here are the results obtained in the numtilinear model**
+ RMSE        Rsquared   MAE      
+  0.03070459  0.9558943  0.0189076
+  
++ When doing KNN using the predictors of the second model we obtained and Rsquared 0.94 and a RMSE of 65.53355
+  k  RMSE        Rsquared   MAE       
+  5  0.04083398  0.9229490  0.02620854
+  7  0.04211272  0.9184072  0.02724529
+  9  0.04337429  0.9138684  0.02841653
+  
++ Once again the lowest K folds lead to the best results which are an RMSE of 0.04, Rsq 0.9229 and a MAE of 0.02
++ When comparing to the parametric multi-linear model2 that had the same predictors we saw very different results. The non parametric KNN lead to really good RMSE , Rsquared and MAE. The KNN's RMSE was 0.01 lower, the Rsquared was .10 higher and the MAE was .02 lower
+
+****Here are the results obtained in the numtilinear model**
+  RMSE        Rsquared   MAE      
+  0.05801915  0.8461734  0.0412418
+  
+
+```{r include=FALSE, warning=FALSE}
+
+TrainKNN<- train(
+  log(Life.expectancy) ~ Country + Year + Adult.Mortality + 
+    HIV.AIDS + Hepatitis.B + Measles + Schooling + LogYouthThinness,
+  data = trainLife ,
+  method = 'knn',
+  preProcess = c("center", "scale"),
+  trControl = train_control)
+
+#Print results
+print(TrainKNN)
+
+test.features = subset(testLife, select=-c(Life.expectancy))
+test.target = subset(testLife, select=Life.expectancy)[,1]
+
+#predictions
+predictions = predict(TrainKNN, newdata = test.features)
+
+# RMSE
+sqrt(mean((test.target - predictions)^2))
+
+#R^2
+cor(test.target, predictions) ^ 2
+
+```
+
+```{r, include=FALSE, warning=FALSE}
+
+#RUn KNN using multilinear region model 2 to compare results
+TrainKNNmodel2<- train(
+  log(Life.expectancy) ~ Status + Income.composition.of.resources + 
+    log(GDP) + Adult.Mortality + Hepatitis.B + log(HIV.AIDS) + 
+    Schooling + Measles + under.five.deaths + LogYouthThinness, 
+  data = trainLife ,
+  method = 'knn',
+  preProcess = c("center", "scale"),
+  trControl = train_control)
+print(TrainKNNmodel2)
+
+test.features = subset(testLife, select=-c(Life.expectancy))
+test.target = subset(testLife, select=Life.expectancy)[,1]
+
+#prdictions
+predictions = predict(TrainKNNmodel2, newdata = test.features)
+
+# RMSE
+sqrt(mean((test.target - predictions)^2))
+
+#R^2
+cor(test.target, predictions) ^ 2
+
+```
+
+
+# Conclusion
+
+
+
++ Doing the EDA we found the the most important variables where: County, Status, BMI, Income.composition.of.resources, GDP, Year, Adult.Mortality, Hepatitis.B, HIV.AIDS, Schooling, under.five.deaths and the new variable creates with was logYouththinness. All of these variables showed high correlation in the plots. Once we run the first set of models we realized that under.five.deaths,Infant Mortality and Measles had very high correlation and lead to very high VIF which is why we only kept Measled from the 3 predictors. In these first set of models we could see that when Country was added some predictors needed to be dropped due to very high VIF and year was no long significant when country was not added. Once the models were created and we checked fit model vs predict we realized that only log linear model did a good job so we dropped the rest.From those the best result on the predicted with cross validation was RMSE of 0.03 Rsquared of 0.95 and a MAE of 0.01. Model was log(life.expectancy)~Country + Year + Adult Mortality + HIV/AIDS + Hepatitis B + Measles + Schooling + LogYouthThinness. This model like the rest passed the assumption by checking the residual plots. For the second set of models using the new log variable, logging HIV, GDP as well as some others adding a square term to adult.mortality based on graphs and eve another one adding an interaction between country and year. Sadly the one with the interaction did not work due to the high VIF's and the winning model that did not have high VIF lead to a RMSE 0.05801915 Rsquared 0.8461734  and MAE0.0412418.The model was log(life.expectancy) ~Status + Income Composition of Resources + log(GDP) + Year + Adult Mortality + Hepatitis B + log(HIV.AIDS) + Schooling + Measles + Under Five Deaths + LogYouthThinness. It did not include country and thus explains the lower statistics. As fo the last models using KNN we found that using the exact same predictors as that second linear regression model lead to very different result which had better accuracy while the other predictors from the first model using KNN lead to very similar results. All  of these models had a significant p value which leads to believe that the combination of these variables did have an influence on life expectancy as we hypothesized. We don't know how this data was collected so having more information about it would be useful to be able to determine if we can make inference or know to which type of population the inferences apply to.
+
+**Extra**
+### **Further small test on finding the best amount of predictors and checking if it alliance with our best models**
++ The best BIC states is at 165 predictors according to graph. We have 156 unique Countries, so we have 155 dummies, so if country is included it will require around 10 other predictors to have the best BIC
++ Our best model did include country and had 7 extra predictors which is very similar and according to this leads to the best metrics
+
+```{r, echo=FALSE, fig.height=3,fig.width=7}
+library(leaps)
+library(dplyr)
+library(tidyr)
+
+reg_fwd=regsubsets(log(Life.expectancy)~.,data=cleaned_LifeExpec,method="forward",nvmax=170)
+
+#summary(reg.fwd)$adjr2
+#summary(reg.fwd)$rss
+#summary(reg.fwd)$bic
+
+par(mfrow=c(1,3))
+bics<-summary(reg_fwd)$bic
+length(bics)
+plot(1:171,bics,type="l",ylab="BIC",xlab="# of predictors")
+index<-which(bics==min(bics))
+points(index,bics[index],col="red",pch=10)
+
+adjr2<-summary(reg_fwd)$adjr2
+plot(1:171,adjr2,type="l",ylab="Adjusted R-squared",xlab="# of predictors")
+index<-which(adjr2==max(adjr2))
+points(index,adjr2[index],col="red",pch=10)
+
+rss<-summary(reg_fwd)$rss
+plot(1:171,rss,type="l",ylab="train RSS",xlab="# of predictors")
+index<-which(rss==min(rss))
+points(index,rss[index],col="red",pch=10)
+
+```
+### **Checking the ASE at 160, the model seems to be almost perfect no bias nor variance**
+```{r warning=FALSE, echo=FALSE}
+set.seed(1234)
+
+reg.fwd=regsubsets((Life.expectancy)~.,data=trainLife,method="forward",nvmax=170)
+
+predict.regsubsets =function (object , newdata ,id ,...){
+  form=as.formula (object$call [[2]])
+  mat=model.matrix(form ,newdata )
+  coefi=coef(object ,id=id)
+  xvars=names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+```
+
+```{r, echo=T, fig.width=5,fig.height=4}
+testASE<-c()
+#note my index is to 20 since that what I set it in regsubsets
+for (i in 1:171){
+  predictions<-predict.regsubsets(object=reg.fwd,newdata=testLife,id=i) 
+  testASE[i]<-mean(((testLife$Life.expectancy)-predictions)^2)
+}
+par(mfrow=c(1,1))
+plot(1:171,testASE,type="l",xlab="# of predictors",ylab="test vs train ASE",ylim=c(0,90))
+index<-which(testASE==min(testASE))
+points(index,testASE[index],col="red",pch=10)
+rss<-summary(reg.fwd)$rss
+lines(1:171,rss/738,lty=3,col="blue")  #Dividing by 177 since ASE=RSS/sample size
+```
+
+
+# With and without Cross Validation same results
+## RMSE is 65.9119
+## Test R^2 is 0.96015
+
+
+
+
+
+
+
+
+
+
